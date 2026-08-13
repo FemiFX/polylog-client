@@ -1,0 +1,107 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Listener client demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 16px/1.6 system-ui, sans-serif;
+    max-width: 46rem; margin: 2rem auto; padding: 0 1.25rem;
+  }
+  header { display: flex; gap: .75rem; align-items: baseline; flex-wrap: wrap; }
+  h1 { font-size: 1.15rem; margin: 0 1rem 0 0; }
+  #status { font-size: .8rem; padding: .15rem .5rem; border-radius: 999px; border: 1px solid currentColor; }
+  .connected { color: #167a3c; } .reconnecting, .connecting { color: #a2680a; }
+  .disconnected, .error, .closed { color: #b3261e; }
+  #controls { margin: 1rem 0; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+  #subs { margin-top: 1.5rem; }
+  .block { padding: .6rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+  .speaker { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; opacity: .6; }
+  .text { font-size: 1.3rem; }
+  .live .text::after { content: "▍"; opacity: .5; }
+  footer { margin-top: 2rem; font-size: .8rem; opacity: .65; }
+</style>
+
+<header>
+  <h1 id="event">Listener client demo</h1>
+  <span id="status" class="connecting">connecting</span>
+</header>
+
+<div id="controls">
+  <label>Language
+    <select id="lang"></select>
+  </label>
+  <label><input type="checkbox" id="inroom"> I'm in the room</label>
+</div>
+
+<div id="subs"></div>
+
+<footer>
+  Driven by a mock server — no translation backend involved.
+  Try <a href="/?token=bad-token">?token=bad-token</a> to see the fatal-error path:
+  the client stops instead of reconnecting.
+</footer>
+
+<script type="module">
+  import { ListenerClient } from "../src/listener-client.js";
+
+  const token = new URL(location.href).searchParams.get("token") || "demo-token";
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+
+  const client = new ListenerClient({
+    url: `${proto}//${location.host}/ws/listen/${token}`,
+    lang: "de",
+  });
+
+  const $ = (s) => document.querySelector(s);
+  const blocks = new Map();
+
+  client.on("status", ({ state }) => {
+    $("#status").textContent = state;
+    $("#status").className = state;
+  });
+
+  client.on("welcome", (msg) => {
+    $("#event").textContent = msg.event_name || "Listener client demo";
+    const select = $("#lang");
+    select.innerHTML = "";
+    for (const code of msg.languages || []) {
+      const opt = document.createElement("option");
+      opt.value = code;
+      opt.textContent = code.toUpperCase();
+      opt.selected = code === msg.language;
+      select.append(opt);
+    }
+  });
+
+  client.on("blockStart", ({ turnId }) => {
+    const el = document.createElement("div");
+    el.className = "block live";
+    el.innerHTML = `<div class="speaker">${client.currentSpeaker ?? ""}</div><div class="text"></div>`;
+    $("#subs").prepend(el);
+    blocks.set(turnId, el);
+  });
+
+  client.on("delta", ({ turnId, full }) => {
+    const el = blocks.get(turnId);
+    if (el) el.querySelector(".text").textContent = full;
+  });
+
+  client.on("blockEnd", ({ turnId }) => blocks.get(turnId)?.classList.remove("live"));
+
+  client.on("error", (msg) => {
+    const el = document.createElement("div");
+    el.className = "block";
+    el.innerHTML = `<div class="speaker">error — retry: ${msg.retry}</div>
+                    <div class="text">${msg.message ?? msg.code}</div>`;
+    $("#subs").prepend(el);
+  });
+
+  $("#lang").addEventListener("change", (e) => {
+    $("#subs").innerHTML = "";
+    blocks.clear();
+    client.setLanguage(e.target.value);
+  });
+  $("#inroom").addEventListener("change", (e) => client.setInRoom(e.target.checked));
+
+  client.connect();
+</script>

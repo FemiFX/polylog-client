@@ -1,0 +1,20 @@
+{
+  "name": "polylog-client",
+  "version": "0.1.0",
+  "description": "Browser client for a live speech-translation WebSocket protocol: listener runtime plus AudioWorklet PCM capture.",
+  "type": "module",
+  "main": "src/listener-client.js",
+  "exports": {
+    ".": "./src/listener-client.js",
+    "./pcm": "./src/pcm.js",
+    "./capture-worklet": "./src/capture-worklet.js"
+  },
+  "files": ["src", "PROTOCOL.md", "README.md", "LICENSE"],
+  "scripts": {
+    "demo": "node demo/mock-server.js"
+  },
+  "keywords": ["websocket", "translation", "subtitles", "audioworklet", "pcm", "realtime"],
+  "author": "Oluwafemi Akinlosotu",
+  "license": "MIT",
+  "devDependencies": { "ws": "^8.18.0" }
+}
