@@ -21,26 +21,39 @@ const PORT = Number(process.env.PORT || 8080);
 
 const LANGUAGES = ["de", "fr", "es"];
 
-// Fictional conference remarks, per language.
+// What the speaker says, as the listener receives it in each language:
+// Articles 1-7 of the Universal Declaration of Human Rights in the official
+// UN translations, which the UN allows anyone to reproduce. Real speech is
+// uneven -- a short sentence, then a long one -- and so is this.
 const SCRIPT = {
   de: [
-    "Guten Morgen und herzlich willkommen zu unserer Jahreskonferenz.",
-    "Bevor wir beginnen, ein kurzer Hinweis zum Ablauf des heutigen Tages.",
-    "Die erste Sitzung dauert etwa vierzig Minuten, danach gibt es eine Pause.",
+    "Alle Menschen sind frei und gleich an Würde und Rechten geboren. Sie sind mit Vernunft und Gewissen begabt und sollen einander im Geiste der Brüderlichkeit begegnen.",
+    "Jeder hat Anspruch auf alle in dieser Erklärung verkündeten Rechte und Freiheiten, ohne irgendeinen Unterschied, etwa nach Rasse, Hautfarbe, Geschlecht, Sprache, Religion, politischer oder sonstiger Anschauung, nationaler oder sozialer Herkunft, Vermögen, Geburt oder sonstigem Stand. Des weiteren darf kein Unterschied gemacht werden auf Grund der politischen, rechtlichen oder internationalen Stellung des Landes oder Gebietes, dem eine Person angehört, gleichgültig ob dieses unabhängig ist, unter Treuhandschaft steht, keine Selbstregierung besitzt oder sonst in seiner Souveränität eingeschränkt ist.",
+    "Jeder hat das Recht auf Leben, Freiheit und Sicherheit der Person.",
+    "Niemand darf in Sklaverei oder Leibeigenschaft gehalten werden; Sklaverei und Sklavenhandel in allen ihren Formen sind verboten.",
+    "Niemand darf der Folter oder grausamer, unmenschlicher oder erniedrigender Behandlung oder Strafe unterworfen werden.",
+    "Jeder hat das Recht, überall als rechtsfähig anerkannt zu werden.",
+    "Alle Menschen sind vor dem Gesetz gleich und haben ohne Unterschied Anspruch auf gleichen Schutz durch das Gesetz. Alle haben Anspruch auf gleichen Schutz gegen jede Diskriminierung, die gegen diese Erklärung verstößt, und gegen jede Aufhetzung zu einer derartigen Diskriminierung.",
   ],
   fr: [
-    "Bonjour et bienvenue à notre conférence annuelle.",
-    "Avant de commencer, quelques mots sur le déroulement de la journée.",
-    "La première session dure environ quarante minutes, suivie d'une pause.",
+    "Tous les êtres humains naissent libres et égaux en dignité et en droits. Ils sont doués de raison et de conscience et doivent agir les uns envers les autres dans un esprit de fraternité.",
+    "Chacun peut se prévaloir de tous les droits et de toutes les libertés proclamés dans la présente Déclaration, sans distinction aucune, notamment de race, de couleur, de sexe, de langue, de religion, d'opinion politique ou de toute autre opinion, d'origine nationale ou sociale, de fortune, de naissance ou de toute autre situation. De plus, il ne sera fait aucune distinction fondée sur le statut politique, juridique ou international du pays ou du territoire dont une personne est ressortissante, que ce pays ou territoire soit indépendant, sous tutelle, non autonome ou soumis à une limitation quelconque de souveraineté.",
+    "Tout individu a droit à la vie, à la liberté et à la sûreté de sa personne.",
+    "Nul ne sera tenu en esclavage ni en servitude; l'esclavage et la traite des esclaves sont interdits sous toutes leurs formes.",
+    "Nul ne sera soumis à la torture, ni à des peines ou traitements cruels, inhumains ou dégradants.",
+    "Chacun a le droit à la reconnaissance en tous lieux de sa personnalité juridique.",
+    "Tous sont égaux devant la loi et ont droit sans distinction à une égale protection de la loi. Tous ont droit à une protection égale contre toute discrimination qui violerait la présente Déclaration et contre toute provocation à une telle discrimination.",
   ],
   es: [
-    "Buenos días y bienvenidos a nuestra conferencia anual.",
-    "Antes de empezar, unas palabras sobre el programa de hoy.",
-    "La primera sesión dura unos cuarenta minutos, seguida de una pausa.",
+    "Todos los seres humanos nacen libres e iguales en dignidad y derechos y, dotados como están de razón y conciencia, deben comportarse fraternalmente los unos con los otros.",
+    "Toda persona tiene todos los derechos y libertades proclamados en esta Declaración, sin distinción alguna de raza, color, sexo, idioma, religión, opinión política o de cualquier otra índole, origen nacional o social, posición económica, nacimiento o cualquier otra condición. Además, no se hará distinción alguna fundada en la condición política, jurídica o internacional del país o territorio de cuya jurisdicción dependa una persona, tanto si se trata de un país independiente, como de un territorio bajo administración fiduciaria, no autónomo o sometido a cualquier otra limitación de soberanía.",
+    "Todo individuo tiene derecho a la vida, a la libertad y a la seguridad de su persona.",
+    "Nadie estará sometido a esclavitud ni a servidumbre, la esclavitud y la trata de esclavos están prohibidas en todas sus formas.",
+    "Nadie será sometido a torturas ni a penas o tratos crueles, inhumanos o degradantes.",
+    "Todo ser humano tiene derecho, en todas partes, al reconocimiento de su personalidad jurídica.",
+    "Todos son iguales ante la ley y tienen, sin distinción, derecho a igual protección de la ley. Todos tienen derecho a igual protección contra toda discriminación que infrinja esta Declaración y contra toda provocación a tal discriminación.",
   ],
 };
-
-const SPEAKERS = ["Speaker A", "Speaker B"];
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -86,35 +99,46 @@ wss.on("connection", (ws, req) => {
     event_name: "Annual Conference (demo)",
     language: lang,
     languages: LANGUAGES,
-    current_speaker: SPEAKERS[0],
     in_room: inRoom,
   }));
 
+  let article = 0;
   let turn = 0;
+  let switched = false;
   let cancelled = false;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Deterministic jitter, so every run of the demo streams at the same pace.
+  let seed = 7;
+  const jitter = (n) => { seed = (seed * 48271) % 2147483647; return seed % n; };
 
   (async () => {
     while (!cancelled && ws.readyState === ws.OPEN) {
       const lines = SCRIPT[lang] || SCRIPT.de;
-      const text = lines[turn % lines.length];
-      const speaker = SPEAKERS[turn % SPEAKERS.length];
+      const text = lines[article % lines.length];
       const turnId = `turn-${++turn}`;
+      switched = false;
 
-      ws.send(JSON.stringify({ type: "speaker_label", speaker }));
       ws.send(JSON.stringify({ type: "translation_start", turn_id: turnId }));
 
       // Stream word by word: real translation arrives as a continuous stream,
       // and a client that only renders on translation_end will feel seconds
-      // slower than the system actually is.
+      // slower than the system actually is. Pauses follow the punctuation,
+      // the way a speaker breathes.
       for (const word of text.split(" ")) {
         if (cancelled || ws.readyState !== ws.OPEN) return;
+        if (switched) break;
         ws.send(JSON.stringify({ type: "translation_delta", turn_id: turnId, text: word + " " }));
-        await sleep(140);
+        let pause = 110 + jitter(140);
+        if (/[,;:]$/.test(word)) pause += 320;
+        if (/[.!?]$/.test(word)) pause += 700;
+        await sleep(pause);
       }
 
       ws.send(JSON.stringify({ type: "translation_end", turn_id: turnId }));
-      await sleep(1200);
+      // A language switch restarts the current passage in the new language.
+      if (switched) continue;
+      article += 1;
+      await sleep(900 + jitter(900));
     }
   })();
 
@@ -123,7 +147,7 @@ wss.on("connection", (ws, req) => {
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg.type === "set_language" && LANGUAGES.includes(msg.lang)) {
       lang = msg.lang;
-      ws.send(JSON.stringify({ type: "speaker_label", speaker: SPEAKERS[0] }));
+      switched = true;
     }
     if (msg.type === "set_in_room") inRoom = Boolean(msg.in_room);
   });

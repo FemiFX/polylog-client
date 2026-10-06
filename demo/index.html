@@ -1,45 +1,47 @@
 <!doctype html>
+<html lang="en" data-theme="dark">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
 <title>Listener client demo</title>
-<style>
-  :root { color-scheme: light dark; }
-  body {
-    font: 16px/1.6 system-ui, sans-serif;
-    max-width: 46rem; margin: 2rem auto; padding: 0 1.25rem;
-  }
-  header { display: flex; gap: .75rem; align-items: baseline; flex-wrap: wrap; }
-  h1 { font-size: 1.15rem; margin: 0 1rem 0 0; }
-  #status { font-size: .8rem; padding: .15rem .5rem; border-radius: 999px; border: 1px solid currentColor; }
-  .connected { color: #167a3c; } .reconnecting, .connecting { color: #a2680a; }
-  .disconnected, .error, .closed { color: #b3261e; }
-  #controls { margin: 1rem 0; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
-  #subs { margin-top: 1.5rem; }
-  .block { padding: .6rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
-  .speaker { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; opacity: .6; }
-  .text { font-size: 1.3rem; }
-  .live .text::after { content: "▍"; opacity: .5; }
-  footer { margin-top: 2rem; font-size: .8rem; opacity: .65; }
-</style>
+<link rel="stylesheet" href="/demo/listener.css">
 
-<header>
-  <h1 id="event">Listener client demo</h1>
-  <span id="status" class="connecting">connecting</span>
-</header>
+<div class="ls-read" id="root">
+  <header class="ls-head">
+    <div class="ls-title">
+      <p class="ls-event"><span class="pl-ellipsis" id="event">Listener client demo</span><span class="pl-tag">Recorded demo</span></p>
+      <label class="ls-lang" id="langwrap" hidden>
+        <select id="lang" aria-label="Reading language"></select>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </label>
+    </div>
+    <span id="pill"></span>
+  </header>
 
-<div id="controls">
-  <label>Language
-    <select id="lang"></select>
-  </label>
-  <label><input type="checkbox" id="inroom"> I'm in the room</label>
+  <div class="ls-main">
+    <main class="ls-scroll" id="scroll" tabindex="0" aria-label="Captions">
+      <div class="ls-flow">
+        <div id="state"></div>
+        <div class="pl-captions" id="subs" role="region" aria-label="Captions"></div>
+      </div>
+    </main>
+  </div>
+
+  <nav class="ls-tools" aria-label="Reading controls">
+    <div class="ls-size" role="group" aria-label="Text size">
+      <button type="button" class="pl-btn ls-tool" id="smaller" aria-label="Smaller text"><span class="ls-a ls-a-small" aria-hidden="true">A</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+      <button type="button" class="pl-btn ls-tool" id="larger" aria-label="Larger text"><span class="ls-a ls-a-large" aria-hidden="true">A</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    </div>
+    <button type="button" class="pl-btn ls-tool ls-room" id="inroom" aria-pressed="false">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20a6 6 0 0 1 12 0M14 20a6 6 0 0 1 6 0"/></svg>
+      <span>I'm in the room</span>
+    </button>
+    <p class="ls-note">
+      Driven by a mock server — no translation backend involved.
+      Try <a href="/?token=bad-token">?token=bad-token</a> to see the fatal-error path.
+    </p>
+  </nav>
 </div>
-
-<div id="subs"></div>
-
-<footer>
-  Driven by a mock server — no translation backend involved.
-  Try <a href="/?token=bad-token">?token=bad-token</a> to see the fatal-error path:
-  the client stops instead of reconnecting.
-</footer>
 
 <script type="module">
   import { ListenerClient } from "../src/listener-client.js";
@@ -54,54 +56,170 @@
 
   const $ = (s) => document.querySelector(s);
   const blocks = new Map();
+  const NATIVE = { de: "Deutsch", en: "English", es: "Español", fr: "Français" };
 
-  client.on("status", ({ state }) => {
-    $("#status").textContent = state;
-    $("#status").className = state;
-  });
+  const SHAPES = {
+    live: '<circle cx="6" cy="6" r="5" fill="currentColor"/>',
+    starting: '<circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 2.2"/>',
+    problem: '<path d="M6 1l5.2 9.5H0.8z" fill="currentColor"/>',
+    ended: '<rect x="2" y="2" width="8" height="8" rx="1.5" fill="currentColor"/>',
+  };
+  // Status is a word and a shape, never colour alone.
+  const PILLS = {
+    connecting: ["starting", "Connecting"],
+    connected: ["live", "Live"],
+    reconnecting: ["starting", "Reconnecting"],
+    disconnected: ["ended", "Disconnected"],
+    closed: ["ended", "Disconnected"],
+  };
+  let fatal = null;
+
+  function setPill(state) {
+    const [kind, word] = fatal ? ["problem", "Problem"] : PILLS[state] || PILLS.connecting;
+    $("#pill").className = `pl-status ${kind}`;
+    $("#pill").innerHTML =
+      `<svg class="pl-st-${kind}" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">${SHAPES[kind]}</svg>${word}`;
+  }
+
+  function setState(kind, title, body) {
+    const el = $("#state");
+    $("#scroll").classList.toggle("ls-has-state", Boolean(kind));
+    if (!kind) { el.innerHTML = ""; return; }
+    const glyph = kind === "problem"
+      ? '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9.5 17H2.5z"/><path d="M12 10v4M12 17v.5"/></svg>'
+      : '<span aria-hidden="true">~</span>';
+    el.innerHTML = `<div class="ls-state-in" data-kind="${kind}">
+      <div class="ls-state-glyph">${glyph}</div>
+      <p class="ls-state-title"></p><p class="ls-state-body"></p></div>`;
+    el.querySelector(".ls-state-title").textContent = title;
+    el.querySelector(".ls-state-body").textContent = body;
+  }
+
+  // A passage is split into paragraphs at sentence ends, up to about this many
+  // characters each, so a long passage reads as paragraphs, not a wall.
+  const MAX_PARAGRAPH = 260;
+  // The newest words are still settling; they show faint until the next ones
+  // arrive or the passage ends.
+  const SETTLING_WORDS = 4;
+
+  function paragraphs(text) {
+    const sentences = text.match(/[^.!?]+[.!?]+["»”)]*\s*|[^.!?]+$/g) || [];
+    const out = [];
+    for (const s of sentences) {
+      const last = out.length - 1;
+      if (last >= 0 && (out[last] + s).length <= MAX_PARAGRAPH) out[last] += s;
+      else out.push(s);
+    }
+    return out.map((p) => p.trim()).filter(Boolean);
+  }
+
+  // Renders one passage into its block: settled text, settling words, and the
+  // cursor at the live position while the passage is still being spoken.
+  function renderBlock(block, text, live) {
+    const parts = paragraphs(text);
+    block.replaceChildren();
+    parts.forEach((part, i) => {
+      const p = document.createElement("p");
+      p.className = "pl-cap-text";
+      p.lang = block.dataset.lang;
+      if (live && i === parts.length - 1) {
+        const words = part.split(" ");
+        const settled = words.slice(0, -SETTLING_WORDS).join(" ");
+        const settling = words.slice(-SETTLING_WORDS).join(" ");
+        p.append(settled ? settled + " " : "");
+        const interim = document.createElement("span");
+        interim.className = "pl-interim";
+        interim.textContent = settling;
+        const caret = document.createElement("span");
+        caret.className = "pl-caret";
+        caret.setAttribute("aria-hidden", "true");
+        p.append(interim, caret);
+      } else {
+        p.textContent = part;
+      }
+      block.append(p);
+    });
+  }
+
+  const atBottom = () => {
+    const s = $("#scroll");
+    return s.scrollHeight - s.scrollTop - s.clientHeight < 40;
+  };
+  const follow = (wasAtBottom) => { if (wasAtBottom) $("#scroll").scrollTop = $("#scroll").scrollHeight; };
+
+  client.on("status", ({ state }) => setPill(state));
 
   client.on("welcome", (msg) => {
     $("#event").textContent = msg.event_name || "Listener client demo";
     const select = $("#lang");
     select.innerHTML = "";
     for (const code of msg.languages || []) {
-      const opt = document.createElement("option");
-      opt.value = code;
-      opt.textContent = code.toUpperCase();
-      opt.selected = code === msg.language;
+      const opt = new Option(NATIVE[code] || code.toUpperCase(), code, false, code === msg.language);
+      opt.lang = code;
       select.append(opt);
     }
+    $("#langwrap").hidden = !select.options.length;
+    if (!blocks.size) setState("live", "Listening", "The translation appears here as soon as someone speaks.");
   });
 
   client.on("blockStart", ({ turnId }) => {
+    const wasAtBottom = atBottom();
+    setState(null);
     const el = document.createElement("div");
-    el.className = "block live";
-    el.innerHTML = `<div class="speaker">${client.currentSpeaker ?? ""}</div><div class="text"></div>`;
-    $("#subs").prepend(el);
+    el.className = "pl-cap";
+    el.dataset.lang = $("#lang").value;
+    el.dataset.text = "";
+    $("#subs").append(el);
     blocks.set(turnId, el);
+    follow(wasAtBottom);
   });
 
   client.on("delta", ({ turnId, full }) => {
     const el = blocks.get(turnId);
-    if (el) el.querySelector(".text").textContent = full;
+    if (!el) return;
+    const wasAtBottom = atBottom();
+    el.dataset.text = full;
+    renderBlock(el, full, true);
+    follow(wasAtBottom);
   });
 
-  client.on("blockEnd", ({ turnId }) => blocks.get(turnId)?.classList.remove("live"));
+  client.on("blockEnd", ({ turnId }) => {
+    const el = blocks.get(turnId);
+    if (el) renderBlock(el, el.dataset.text, false);
+  });
 
   client.on("error", (msg) => {
-    const el = document.createElement("div");
-    el.className = "block";
-    el.innerHTML = `<div class="speaker">error — retry: ${msg.retry}</div>
-                    <div class="text">${msg.message ?? msg.code}</div>`;
-    $("#subs").prepend(el);
+    if (msg.retry !== false) return;
+    fatal = msg;
+    setPill();
+    setState("problem", "This event link is not valid.", msg.message ?? msg.code ?? "");
   });
 
   $("#lang").addEventListener("change", (e) => {
     $("#subs").innerHTML = "";
     blocks.clear();
+    setState("live", "Listening", "The translation appears here as soon as someone speaks.");
     client.setLanguage(e.target.value);
   });
-  $("#inroom").addEventListener("change", (e) => client.setInRoom(e.target.checked));
 
+  $("#inroom").addEventListener("click", (e) => {
+    const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+    e.currentTarget.setAttribute("aria-pressed", String(on));
+    client.setInRoom(on);
+  });
+
+  // Starts from the size the stylesheet chose for this screen width.
+  let capSize = parseFloat(getComputedStyle($("#root")).getPropertyValue("--cap-size")) || 21;
+  const resize = (step) => {
+    capSize = Math.min(48, Math.max(15, capSize + step));
+    $("#root").style.setProperty("--cap-size", `${capSize}px`);
+    $("#smaller").disabled = capSize <= 15;
+    $("#larger").disabled = capSize >= 48;
+  };
+  $("#smaller").addEventListener("click", () => resize(-2));
+  $("#larger").addEventListener("click", () => resize(2));
+
+  setPill("connecting");
+  setState("live", "Connecting…", "");
   client.connect();
 </script>
